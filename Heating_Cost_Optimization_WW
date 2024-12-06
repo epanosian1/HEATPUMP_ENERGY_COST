@@ -79,7 +79,7 @@ variables:
     {% if weather_condition == 'snowy' or defrost_risk or is_peak_rate %}
       10
     {% else %}
-      -15
+      -4
     {% endif %}
   wait_time: "00:10:00"
 mode: single
