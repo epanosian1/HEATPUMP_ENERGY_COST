@@ -1,0 +1,85 @@
+alias: Heating Cost Optimization With Wait
+description: Optimize heating efficiency by dynamically adjusting Compressor Min Temp
+triggers:
+  - entity_id: sensor.hydro_ottawa_limited_residential_electricity_rate
+    trigger: state
+  - entity_id: climate.my_ecobee
+    trigger: state
+  - entity_id: weather.ottawa_kanata_orleans_forecast
+    trigger: state
+conditions:
+  - condition: state
+    entity_id: climate.my_ecobee
+    state: heat
+  - condition: template
+    value_template: "{{ states('climate.my_ecobee') != 'unavailable' }}"
+actions:
+  - data:
+      level: info
+      message: >
+        Starting automation. Current states:
+        HVAC action: {{ state_attr('climate.my_ecobee', 'hvac_action') }},
+        Compressor min temp: {{ states('number.my_ecobee_compressor_minimum_temperature') }}°C,
+        Is peak rate: {{ is_peak_rate }},
+        Defrost risk: {{ defrost_risk }},
+        Outdoor temp: {{ outdoor_temp }}°C,
+        Outdoor humidity: {{ outdoor_humidity }}%,
+        Weather Condition: {{ weather_condition }}
+    action: system_log.write
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ state_attr('climate.my_ecobee', 'hvac_action') == 'heating' }}"
+        sequence:
+          - data:
+              level: info
+              message: >-
+                HVAC equipment is running. Waiting for it to become idle (max {{ wait_time }}).
+            action: system_log.write
+          - wait_template: "{{ state_attr('climate.my_ecobee','hvac_action') == 'idle' }}"
+            continue_on_timeout: true
+            timeout: "{{ wait_time }}"
+          - data:
+              level: info
+              message: Wait completed. Re-evaluating conditions.
+            action: system_log.write
+      - conditions:
+          - condition: template
+            value_template: "{{ state_attr('climate.my_ecobee', 'hvac_action') != 'heating' }}"
+        sequence:
+          - service: number.set_value
+            target:
+              entity_id: number.my_ecobee_compressor_minimum_temperature
+            data:
+              value: "{{ compressor_min_temp | float }}"
+          - data:
+              level: info
+              message: >
+                Compressor minimum temperature set to {{ compressor_min_temp }}°C based on current conditions.
+            action: system_log.write
+    default:
+      - data:
+          level: info
+          message: HVAC is still running. No changes made to compressor minimum temperature.
+        action: system_log.write
+variables:
+  outdoor_temp: >-
+    {{ state_attr('weather.ottawa_kanata_orleans_forecast', 'temperature') | float(0) }}
+  outdoor_humidity: >-
+    {{ state_attr('weather.ottawa_kanata_orleans_forecast', 'humidity') | float(0) }}
+  weather_condition: "{{ states('weather.ottawa_kanata_orleans_forecast') }}"
+  defrost_risk: >
+    {% set risk = outdoor_temp > -5 and outdoor_temp < 3 and outdoor_humidity > 90 %}
+    {{ risk }}
+  current_rate: "{{ states('sensor.hydro_ottawa_limited_residential_electricity_rate') }}"
+  active_peak: >-
+    {{ state_attr('sensor.hydro_ottawa_limited_residential_electricity_rate', 'active_peak') }}
+  is_peak_rate: "{{ active_peak == 'ulo_on_peak' }}"
+  compressor_min_temp: >
+    {% if weather_condition == 'snowy' or defrost_risk or is_peak_rate %}
+      10
+    {% else %}
+      -15
+    {% endif %}
+  wait_time: "00:10:00"
+mode: single
